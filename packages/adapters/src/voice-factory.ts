@@ -42,14 +42,22 @@ export function scriptedVoiceEnabled() {
 }
 
 export function listVoiceCatalog() {
-  return scriptedVoiceEnabled()
-    ? [...VOICE_CATALOG, SCRIPTED_VOICE_CATALOG_ENTRY]
-    : [...VOICE_CATALOG];
+  const catalog = VOICE_CATALOG.map((entry) =>
+    entry.id === "openai" && process.env.VOICE_SPEECH_BASE_URL
+      ? {
+          ...entry,
+          name: "Local speech",
+          description: "Compatible speech server.",
+          transcribe: Boolean(process.env.VOICE_TRANSCRIPTION_URL),
+        }
+      : entry,
+  );
+  return scriptedVoiceEnabled() ? [...catalog, SCRIPTED_VOICE_CATALOG_ENTRY] : catalog;
 }
 
 export function voiceCatalogEntry(id: string) {
   if (id === SCRIPTED_VOICE_CATALOG_ENTRY.id) return SCRIPTED_VOICE_CATALOG_ENTRY;
-  return VOICE_CATALOG.find((entry) => entry.id === id);
+  return listVoiceCatalog().find((entry) => entry.id === id);
 }
 
 export function isVoiceProviderId(value: string): value is VoiceProviderId {
@@ -63,7 +71,11 @@ export function createVoiceProvider(kind: string): VoiceProvider {
     case "elevenlabs":
       return new ElevenLabsVoiceProvider();
     case "openai":
-      return new OpenAIVoiceProvider();
+      return new OpenAIVoiceProvider({
+        baseUrl: process.env.VOICE_SPEECH_BASE_URL,
+        model: process.env.VOICE_SPEECH_MODEL,
+        voice: process.env.VOICE_SPEECH_VOICE,
+      });
     case "cartesia":
       return new CartesiaVoiceProvider();
     case "fish-audio":
