@@ -8,6 +8,7 @@ import {
   MAX_SPEAK_CHARS,
   MAX_TRANSCRIBE_BYTES,
   NoVoiceConfigured,
+  transcribeWhisper,
   voiceCatalogEntry,
 } from "@rakazo/adapters";
 import type { Actor, VoiceCredential, VoiceStatus } from "@rakazo/contracts";
@@ -57,7 +58,7 @@ export function toVoiceStatus(cred: { provider: string; voiceId: string } | null
   return {
     configured: Boolean(cred),
     ready: Boolean(cred?.voiceId),
-    transcribe: Boolean(entry?.transcribe && cred),
+    transcribe: Boolean(process.env.VOICE_TRANSCRIPTION_URL || (entry?.transcribe && cred)),
     provider: cred?.provider ?? null,
     voiceId: cred?.voiceId ?? "",
   };
@@ -77,7 +78,9 @@ export function toVoiceCredential(row: {
     isDefault: row.isDefault,
     voiceId: row.voiceId,
     speechModel: row.speechModel ?? "",
-    transcribe: Boolean(catalogEntry(row.provider)?.transcribe),
+    transcribe: Boolean(
+      process.env.VOICE_TRANSCRIPTION_URL || catalogEntry(row.provider)?.transcribe,
+    ),
   };
 }
 
@@ -370,6 +373,16 @@ export async function transcribeVoice(
   actor: Actor,
   input: { audio: Uint8Array; mimeType: string; signal?: AbortSignal },
 ) {
+  if (input.audio.byteLength === 0 || input.audio.byteLength > MAX_TRANSCRIBE_BYTES) {
+    throw new ORPCError("BAD_REQUEST", { message: "That recording is empty or too large." });
+  }
+  if (process.env.VOICE_TRANSCRIPTION_URL) {
+    return transcribeWhisper(
+      process.env.VOICE_TRANSCRIPTION_URL,
+      input,
+      voiceContext(actor, input.signal),
+    );
+  }
   const loaded = await loadDefaultVoiceCredential(deps, actor);
   if (!loaded) throw new NoVoiceConfigured("key");
   const provider = createVoiceProvider(loaded.cred.provider);
@@ -377,9 +390,6 @@ export async function transcribeVoice(
     throw new ORPCError("BAD_REQUEST", {
       message: "This voice provider does not transcribe audio. Use on-device dictation instead.",
     });
-  }
-  if (input.audio.byteLength === 0 || input.audio.byteLength > MAX_TRANSCRIBE_BYTES) {
-    throw new ORPCError("BAD_REQUEST", { message: "That recording is empty or too large." });
   }
   return provider.transcribe(
     {
@@ -404,6 +414,7 @@ export function mountVoiceHttpRoutes(
     if (raw === null) return c.json({ error: "Request body is too large." }, 413);
     const body = parseVoiceRequestBody(raw);
     try {
+      const started = performance.now();
       const clip = await synthesizeVoice(deps, actor, {
         text: String((body as { text?: unknown }).text ?? ""),
         voiceId: optionalString((body as { voiceId?: unknown }).voiceId),
@@ -420,6 +431,7 @@ export function mountVoiceHttpRoutes(
         headers: {
           "content-type": clip.mimeType,
           "cache-control": "no-store",
+          "server-timing": `tts;dur=${(performance.now() - started).toFixed(1)}`,
         },
       });
     } catch (error) {
@@ -435,12 +447,14 @@ export function mountVoiceHttpRoutes(
     const body = parseVoiceRequestBody(raw);
     const audioBase64 = String((body as { audioBase64?: unknown }).audioBase64 ?? "");
     try {
+      const started = performance.now();
       const audio = decodeAudioBase64(audioBase64);
       const result = await transcribeVoice(deps, actor, {
         audio,
         mimeType: String((body as { mimeType?: unknown }).mimeType ?? "audio/webm"),
         signal: c.req.raw.signal,
       });
+      c.header("Server-Timing", `stt;dur=${(performance.now() - started).toFixed(1)}`);
       return c.json({ text: result.text });
     } catch (error) {
       return voiceHttpError(c, error);

@@ -4,6 +4,8 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-vad-assets.mjs",
+    "prebuild": "node scripts/copy-vad-assets.mjs",
     "dev": "vite",
     "build": "cross-env NODE_ENV=production vite build",
     "preview": "vite preview",
@@ -14,6 +16,8 @@
     "intl:compile": "lingui compile"
   },
   "dependencies": {
+    "@ricky0123/vad-web": "0.0.30",
+    "onnxruntime-web": "1.22.0",
     "@lingui/core": "6.6.0",
     "@lingui/react": "6.6.0",
     "@orpc/client": "1.15.0",

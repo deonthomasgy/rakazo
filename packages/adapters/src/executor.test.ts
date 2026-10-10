@@ -1333,9 +1333,7 @@ describe("dockerComputerToolInstruction", () => {
 
 describe("voiceCallInstruction", () => {
   it("preserves live-call guidance when end_call is offered", () => {
-    expect(voiceCallInstruction()).toBe(
-      "You are on a live voice call. Reply in one to three short spoken sentences. No markdown, lists, links, or option cards; do not use ask_user unless you truly cannot proceed. Answer directly from what you already know when you can; use tools or subagents only when the answer requires them. If the user asks to end the call or hang up, or the conversation is finished, call end_call with a short title and a one-sentence farewell instead of saying goodbye in text, then do any remaining work as a normal chat reply.",
-    );
+    expect(voiceCallInstruction()).toBe(VOICE_CALL_INSTRUCTION);
     expect(voiceCallInstruction(new Set())).toBe(VOICE_CALL_INSTRUCTION);
     expect(voiceCallInstruction(new Set(["shell"]))).toBe(VOICE_CALL_INSTRUCTION);
   });

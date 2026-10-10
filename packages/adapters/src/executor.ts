@@ -408,7 +408,7 @@ const READ_ONLY_AGENT_TOOLS = new Set([
 ]);
 /** Added to the turn prompt when the user spoke this message on a live voice call. */
 const VOICE_CALL_BASE_INSTRUCTION =
-  "You are on a live voice call. Reply in one to three short spoken sentences. No markdown, lists, links, or option cards; do not use ask_user unless you truly cannot proceed. Answer directly from what you already know when you can; use tools or subagents only when the answer requires them.";
+  "You are on a live voice call. Reply in one to three short spoken sentences. Start with a brief useful spoken response before calling tools. During longer work, give a short update after a meaningful step. Every reply and update is spoken as it streams. No markdown, lists, links, or option cards; do not use ask_user unless you truly cannot proceed. Answer directly from what you already know when you can; use tools or subagents only when the answer requires them.";
 export const VOICE_CALL_INSTRUCTION = `${VOICE_CALL_BASE_INSTRUCTION} If the user asks to end the call or hang up, or the conversation is finished, call end_call with a short title and a one-sentence farewell instead of saying goodbye in text, then do any remaining work as a normal chat reply.`;
 export function voiceCallInstruction(disabled?: ReadonlySet<string>): string {
   return builtinOffered(disabled, "end_call")
@@ -6709,7 +6709,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               tryFlushPendingTools();
               pendingProgress += progressRedactor.push(event.text);
               const now = Date.now();
-              if (!scripted && pendingProgress && now - lastProgressAt >= 250) {
+              if (!scripted && pendingProgress && now - lastProgressAt >= (voiceCall ? 80 : 250)) {
                 await flushProgress();
               }
             } else if (event.type === "progress") {

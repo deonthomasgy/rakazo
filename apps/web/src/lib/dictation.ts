@@ -579,3 +579,36 @@ function cancelResponse(response: Response): void {
 }
 
 export const dictation = new Dictation();
+
+/** Shared HTTP transcription for recordings and the persistent call microphone. */
+export async function transcribeAudio(blob: Blob, parent: AbortSignal): Promise<string> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(parent.reason);
+  if (parent.aborted) abort();
+  else parent.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(
+    () => controller.abort(new Error("Transcription request timed out.")),
+    TRANSCRIPTION_RESPONSE_TIMEOUT_MS,
+  );
+  const spaceId = selectedSpaceId();
+  try {
+    const audioBase64 = await blobToBase64(blob);
+    controller.signal.throwIfAborted();
+    const response = await withAbort(
+      fetch("/api/voice/transcribe", {
+        method: "POST",
+        headers: withSpaceHeaders({ "content-type": "application/json" }, spaceId),
+        credentials: "include",
+        body: JSON.stringify({ audioBase64, mimeType: blob.type }),
+        signal: controller.signal,
+      }),
+      controller.signal,
+    );
+    const body = await readTranscriptionBody(response, controller.signal);
+    if (!response.ok) throw new Error(body.error ?? "Could not transcribe that recording.");
+    return body.text?.trim() ?? "";
+  } finally {
+    clearTimeout(timer);
+    parent.removeEventListener("abort", abort);
+  }
+}

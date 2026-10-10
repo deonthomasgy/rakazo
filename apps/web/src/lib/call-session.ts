@@ -8,11 +8,13 @@ import {
   isInterimCallBargeIn,
   isSecretAskBlock,
   runThreadSubscription,
+  StreamingSpeech,
   speechFromBlocks,
   spokenDecision,
   spokenMemory,
 } from "@rakazo/core";
 import { useSyncExternalStore } from "react";
+import { CallMicrophone } from "./call-microphone.js";
 import { dictation } from "./dictation.js";
 import { rpc } from "./rpc.js";
 import { isThreadSnapshotEvent, reduceThreadSnapshot } from "./thread-events.js";
@@ -52,6 +54,15 @@ let thread: ThreadSnapshot | null = null;
 let feed: AbortController | null = null;
 /** Every bot message already spoken this call: a streaming message updates many times. */
 const spokenMessageIds = new Set<string>();
+const streamingSpeech = new StreamingSpeech();
+const callMicrophone = new CallMicrophone();
+let continuousMic = false;
+let callRunId: string | null = null;
+let initialSnapshot = true;
+let speechPaused = false;
+let heldSpeech: string[] = [];
+let interruptedPlayback = false;
+let voiceOperations = Promise.resolve();
 let unsubSpeech: (() => void) | null = null;
 let unsubDictation: (() => void) | null = null;
 let hangUpAfterReply = false;
@@ -104,6 +115,15 @@ export function startCall(call: {
   endCall();
   callId = randomId();
   transcribe = call.transcribe;
+  continuousMic = call.transcribe;
+  if (continuousMic) speaker.unlock();
+  callRunId = null;
+  initialSnapshot = true;
+  speechPaused = false;
+  heldSpeech = [];
+  interruptedPlayback = false;
+  voiceOperations = Promise.resolve();
+  streamingSpeech.clear();
   spokenMemory.clear();
   clearInterim();
   micOpen = false;
@@ -130,7 +150,9 @@ export function startCall(call: {
       void openMic();
     } else if (speech.status === "idle" && state.phase !== "listening" && !bargedIn) {
       set({ caption: "" });
-      guardThenListen();
+      if (continuousMic && (awaitingReply || runActive(thread)) && !hangUpAfterReply) {
+        set({ phase: "thinking" });
+      } else guardThenListen();
     }
     if (speech.error) set({ caption: speech.error });
   });
@@ -165,6 +187,11 @@ export function endCall(): void {
   guardTimer = null;
   clearInterim();
   micOpen = false;
+  callMicrophone.stop();
+  continuousMic = false;
+  streamingSpeech.clear();
+  callRunId = null;
+  heldSpeech = [];
   bargedIn = false;
   awaitingReply = false;
   unsubSpeech?.();
@@ -186,12 +213,14 @@ export function toggleMute(): void {
   const muted = !state.muted;
   set({ muted });
   if (muted) {
+    callMicrophone.stop();
     dictation.stop("cancel");
     micOpen = false;
     set({ heard: "" });
     return;
   }
-  if (state.phase === "listening") void listen();
+  if (continuousMic) void openMic();
+  else if (state.phase === "listening") void listen();
   else if (state.phase === "speaking") void openMic();
 }
 
@@ -248,6 +277,13 @@ function speakFarewell(payload: Record<string, unknown>) {
 
 function commit(next: ThreadSnapshot | null) {
   if (!next) return null;
+  if (initialSnapshot) {
+    initialSnapshot = false;
+    // Opening a call does not read old chat messages aloud.
+    for (const message of next.messages) {
+      if (message.role === "bot" && message.runId !== callRunId) spokenMessageIds.add(message.id);
+    }
+  }
   thread = next;
   reactToThread();
   return next;
@@ -292,7 +328,36 @@ async function listen() {
 async function openMic() {
   if (!state || micOpen || state.muted || pendingSecretAsk(thread)) return;
   micOpen = true;
+  const openedCallId = callId;
   try {
+    if (continuousMic) {
+      await callMicrophone.start({
+        onSpeechStart: () => {
+          if (!state || callId !== openedCallId) return;
+          // Silero confirms speech before cutting audio; speculative STT keeps captions live.
+          speechPaused = true;
+          bargedIn = true;
+          interruptedPlayback ||= state.phase === "speaking";
+          heldSpeech.push(...speaker.pauseQueue());
+          clearInterim();
+          set({ phase: "listening", caption: "", heard: "" });
+        },
+        onPreview: (text) => {
+          if (callId === openedCallId) set({ heard: text });
+        },
+        onFinal: (text) => {
+          voiceOperations = voiceOperations.then(async () => {
+            if (callId === openedCallId && state && !state.muted) await handleTranscript(text);
+          });
+        },
+        onError: (error) => {
+          if (callId !== openedCallId) return;
+          micOpen = false;
+          set({ caption: errorText(error, t`Microphone failed`) });
+        },
+      });
+      return;
+    }
     await dictation.listen({
       mode: "endpoint",
       transcribe,
@@ -307,9 +372,15 @@ async function openMic() {
 async function handleTranscript(text: string) {
   if (!state) return;
   // Dictation stopped itself to deliver this final.
-  micOpen = false;
+  if (!continuousMic) micOpen = false;
   if (!text.trim()) {
+    resumeSpeech();
     void listen();
+    return;
+  }
+  if (continuousMic && interruptedPlayback && !isCallBargeIn(text)) {
+    resumeSpeech();
+    set({ heard: "" });
     return;
   }
   if (state.phase === "speaking") {
@@ -323,9 +394,10 @@ async function handleTranscript(text: string) {
     speaker.stop();
     set({ phase: "thinking", caption: "" });
   }
-  dictation.stop("submit");
+  if (!continuousMic) dictation.stop("submit");
   // The microphone caught the reply, not the caller: drop it and keep listening.
   if (spokenMemory.isEcho(text)) {
+    resumeSpeech();
     set({ heard: "" });
     void listen();
     return;
@@ -343,6 +415,12 @@ async function handleTranscript(text: string) {
   const turnCallId = callId;
   const closing = isFarewell(text);
   awaitingReply = true;
+  speechPaused = false;
+  heldSpeech = [];
+  interruptedPlayback = false;
+  if (continuousMic) bargedIn = false;
+  // Future deltas from an interrupted run must never resume the cut-off reply.
+  if (continuousMic && callRunId && !askMessage) streamingSpeech.ignore(callRunId);
   set({ heard: text, phase: "thinking", exchanges: [...exchanges, { role: "user", text }] });
   if (closing) {
     hangUpAfterReply = true;
@@ -359,10 +437,25 @@ async function handleTranscript(text: string) {
         messageId: askMessage.id,
         answer: spokenDecision(text) ?? text,
       });
+      if (callId === turnCallId && askMessage.runId) callRunId = askMessage.runId;
     } else if (runActive(thread)) {
-      await rpc.threads.followUp({ botId, text, clientNonce: callClientNonce(turnCallId) });
+      if (continuousMic) {
+        await rpc.threads.stop({ botId });
+        if (!state || callId !== turnCallId) return;
+        const sent = await rpc.threads.send({
+          botId,
+          text,
+          clientNonce: callClientNonce(turnCallId),
+        });
+        if (callId === turnCallId) callRunId = sent.runId;
+      } else await rpc.threads.followUp({ botId, text, clientNonce: callClientNonce(turnCallId) });
     } else {
-      await rpc.threads.send({ botId, clientNonce: callClientNonce(turnCallId), text });
+      const sent = await rpc.threads.send({
+        botId,
+        clientNonce: callClientNonce(turnCallId),
+        text,
+      });
+      if (callId === turnCallId) callRunId = sent.runId;
     }
     if (!state || state.botId !== botId || callId !== turnCallId) return;
     commit(await rpc.threads.get({ botId }, { signal: callFeed?.signal }));
@@ -372,6 +465,17 @@ async function handleTranscript(text: string) {
     set({ caption: errorText(error, t`Could not send that`) });
     void listen();
   }
+}
+
+function resumeSpeech() {
+  if (!state) return;
+  speechPaused = false;
+  interruptedPlayback = false;
+  bargedIn = false;
+  const phrases = heldSpeech;
+  heldSpeech = [];
+  for (const phrase of phrases) speaker.enqueue(phrase, { botId: state.botId });
+  reactToThread();
 }
 
 /**
@@ -411,9 +515,14 @@ function reactToThread() {
   // The bot already said goodbye: neither its marker nor the work it files after it is spoken.
   if (botEndedCall) return;
   if (pendingSecretAsk(thread)) {
+    callMicrophone.stop();
     dictation.stop("cancel");
     micOpen = false;
     set({ heard: "" });
+  }
+  if (continuousMic) {
+    reactToStreamingThread();
+    return;
   }
   // A turn sent back to listening mid-flight must not drop the reply it is waiting for.
   if (state.phase === "listening" && !awaitingReply) return;
@@ -445,6 +554,52 @@ function reactToThread() {
       awaitingReply = false;
       void listen();
     }
+  }
+}
+
+function reactToStreamingThread() {
+  if (!state || speechPaused || !callRunId) return;
+  const messages = thread?.messages ?? [];
+  const current = messages.filter(
+    (message) => message.role === "bot" && message.runId === callRunId,
+  );
+  // Progress and the persisted reply use different message IDs but one cumulative run text.
+  const text = current
+    .flatMap((message) => message.blocks)
+    .flatMap((block) =>
+      block.kind === "text" ||
+      block.kind === "ask" ||
+      (block.kind === "progress" && !block.activity)
+        ? [block.text]
+        : [],
+    )
+    .join("");
+  const done = !runActive(thread) || thread?.run?.id !== callRunId;
+  const phrases = streamingSpeech.observe(callRunId, text, done);
+  const ask = current
+    .flatMap((message) => message.blocks)
+    .find((block) => block.kind === "ask" && block.status !== "answered");
+  for (const phrase of phrases) {
+    spokenMemory.remember(phrase);
+    speaker.enqueue(phrase, { botId: state.botId });
+  }
+  if (phrases.length) {
+    if (done && ask)
+      speaker.enqueue(
+        isSecretAskBlock(ask)
+          ? t`Hang up first, then enter the code on screen.`
+          : t`Say yes or no, or answer in a sentence.`,
+        { botId: state.botId },
+      );
+    const exchanges = [...state.exchanges];
+    if (exchanges.at(-1)?.role === "bot") exchanges[exchanges.length - 1] = { role: "bot", text };
+    else exchanges.push({ role: "bot", text });
+    set({ exchanges, heard: "" });
+  }
+  if (done) {
+    awaitingReply = false;
+    for (const message of current) spokenMessageIds.add(message.id);
+    if (!speaker.isSpeaking()) void listen();
   }
 }
 

@@ -1,4 +1,4 @@
-import { readBoundedResponseBytes } from "@rakazo/core";
+import { readBoundedResponseBytes, SpeechPipeline, toUtterances } from "@rakazo/core";
 import { rpc, selectedSpaceId, withSpaceHeaders } from "./rpc.js";
 import { errorText } from "./user-error.js";
 
@@ -33,6 +33,77 @@ export class Speaker {
   private objectUrl: string | null = null;
   private settlePlayback: ((finished: boolean) => void) | null = null;
   private request: AbortController | null = null;
+  private queueOptions: SpeakOptions = {};
+  private queueSpaceId: string | null = null;
+  private callAudio: AudioContext | null = null;
+  private queue = new SpeechPipeline(
+    async (text, signal) => {
+      const opts = this.queueOptions;
+      const blob = await this.render(text, opts, signal, this.queueSpaceId);
+      const context = this.callAudio;
+      const buffer = context ? await context.decodeAudioData(await blob.arrayBuffer()) : null;
+      return async (playSignal) => {
+        if (playSignal.aborted) return;
+        this.set({
+          status: "speaking",
+          botId: opts.botId,
+          messageId: opts.messageId,
+          caption: text,
+        });
+        const abort = () => this.settlePlayback?.(false);
+        playSignal.addEventListener("abort", abort, { once: true });
+        try {
+          const finished =
+            buffer && context
+              ? await this.playBuffer(buffer, context, playSignal)
+              : await this.play(blob, () => !playSignal.aborted);
+          if (!finished && !playSignal.aborted) throw new Error("Could not play that audio.");
+        } finally {
+          playSignal.removeEventListener("abort", abort);
+        }
+      };
+    },
+    () => {
+      if (!this.queue.busy && this.snapshot.status !== "idle") this.set(IDLE);
+    },
+    (error) => this.set({ ...IDLE, error: errorText(error) }),
+  );
+
+  /** Unlock call output in the button gesture, including browsers with strict autoplay rules. */
+  unlock() {
+    if (typeof AudioContext !== "function") return;
+    this.callAudio ??= new AudioContext();
+    void this.callAudio.resume().catch(() => undefined);
+  }
+
+  private playBuffer(
+    buffer: AudioBuffer,
+    context: AudioContext,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (signal.aborted) {
+        resolve(false);
+        return;
+      }
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(context.destination);
+      const finish = (finished: boolean) => {
+        signal.removeEventListener("abort", abort);
+        source.onended = null;
+        source.disconnect();
+        resolve(finished);
+      };
+      const abort = () => {
+        source.stop();
+        finish(false);
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      source.onended = () => finish(true);
+      source.start();
+    });
+  }
 
   subscribe(fn: (s: SpeechSnapshot) => void): () => void {
     this.watchers.add(fn);
@@ -58,11 +129,30 @@ export class Speaker {
 
   stop() {
     this.token += 1;
+    this.queue.cancel();
     this.request?.abort();
     this.request = null;
     if (this.settlePlayback) this.settlePlayback(false);
     else this.teardownAudio();
     if (this.snapshot.status !== "idle" || this.snapshot.error) this.set(IDLE);
+  }
+
+  /** Append completed streamed phrases without cancelling audio already playing. */
+  enqueue(text: string, opts: SpeakOptions = {}) {
+    if (!text.trim()) return;
+    if (!this.queue.busy) {
+      this.queueSpaceId = selectedSpaceId();
+      this.set({ status: "preparing", botId: opts.botId, messageId: opts.messageId });
+    }
+    this.queueOptions = opts;
+    this.queue.enqueue(toUtterances(text));
+  }
+
+  /** Hold unheard phrases until a suspected interruption is confirmed as a caller turn. */
+  pauseQueue(): string[] {
+    const unheard = this.queue.cancel();
+    this.stop();
+    return unheard;
   }
 
   private teardownAudio() {

@@ -23,6 +23,12 @@ const API = "https://api.openai.com/v1";
 const TTS_MODEL = "gpt-4o-mini-tts";
 const STT_MODEL = "gpt-4o-mini-transcribe";
 
+export interface CompatibleVoiceOptions {
+  baseUrl?: string;
+  model?: string;
+  voice?: string;
+}
+
 const OPENAI_VOICES: VoiceInfo[] = [
   { id: "alloy", label: "Alloy", description: "Neutral" },
   { id: "ash", label: "Ash", description: "Clear" },
@@ -38,38 +44,66 @@ const OPENAI_VOICES: VoiceInfo[] = [
 ];
 
 export class OpenAIVoiceProvider implements VoiceProvider {
+  private baseUrl: string;
+  constructor(private options: CompatibleVoiceOptions = {}) {
+    this.baseUrl = (options.baseUrl?.trim() || API).replace(/\/+$/, "");
+    const url = new URL(this.baseUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:")
+      throw new Error("Speech URL must use HTTP(S).");
+  }
   describe(): AdapterDescriptor<VoiceCapabilities> {
     return {
       id: "openai",
       contractVersion: "1",
       adapterVersion: "0.1.0",
-      capabilities: { catalog: true, synthesize: true, transcribe: true },
+      capabilities: { catalog: true, synthesize: true, transcribe: this.baseUrl === API },
     };
   }
 
   async verify(apiKey: string, context: AdapterContext): Promise<VoiceVerifyResult> {
     return verifyVoiceHttpGet({
-      url: `${API}/models`,
+      url: `${this.baseUrl}/models`,
       headers: { authorization: `Bearer ${apiKey}` },
       signal: context.signal,
       provider: "OpenAI",
     });
   }
 
-  async listVoices(_apiKey: string, _context: AdapterContext): Promise<VoiceInfo[]> {
+  async listVoices(apiKey: string, context: AdapterContext): Promise<VoiceInfo[]> {
+    if (this.baseUrl !== API) {
+      const response = await fetch(`${this.baseUrl}/audio/voices`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+        signal: voiceDeadline(context.signal, 20_000),
+      });
+      await requireOk(response, "Speech server", "listing voices");
+      const body = (await readVoiceJson(response, { requireValid: true })) as {
+        voices?: unknown[];
+      };
+      const voices: VoiceInfo[] = [];
+      for (const item of body.voices ?? []) {
+        const id = typeof item === "string" ? item : (item as { id?: unknown } | null)?.id;
+        if (typeof id === "string" && id.trim()) voices.push({ id, label: id });
+      }
+      if (this.options.voice && !voices.some((voice) => voice.id === this.options.voice)) {
+        voices.unshift({ id: this.options.voice, label: this.options.voice });
+      }
+      return voices.sort(
+        (a, b) => Number(b.id === this.options.voice) - Number(a.id === this.options.voice),
+      );
+    }
     return OPENAI_VOICES;
   }
 
   async synthesize(request: VoiceSynthesizeRequest, context: AdapterContext): Promise<SpeechClip> {
     const signal = voiceDeadline(request.signal ?? context.signal, 60_000);
-    const res = await fetch(`${API}/audio/speech`, {
+    const res = await fetch(`${this.baseUrl}/audio/speech`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${request.apiKey}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: TTS_MODEL,
+        model: request.model || this.options.model || TTS_MODEL,
         voice: request.voiceId,
         input: request.text,
         response_format: "mp3",
@@ -84,6 +118,9 @@ export class OpenAIVoiceProvider implements VoiceProvider {
     request: VoiceTranscribeRequest,
     context: AdapterContext,
   ): Promise<{ text: string }> {
+    if (this.baseUrl !== API) {
+      throw new Error("This speech server needs a separate transcription service.");
+    }
     const form = new FormData();
     form.set("model", STT_MODEL);
     form.set(

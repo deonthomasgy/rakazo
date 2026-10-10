@@ -160,6 +160,23 @@ disposable); `docker compose down -v` deletes all Postgres state.
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, connect a model, and create
 your first bot.
 
+For local voice calls, set `VOICE_SPEECH_BASE_URL` to an OpenAI-compatible speech server's
+`/v1` URL, `VOICE_SPEECH_MODEL` and `VOICE_SPEECH_VOICE` to its model and voice, and
+`VOICE_TRANSCRIPTION_URL` to a whisper.cpp server's `/inference` endpoint. Use URLs reachable
+from the API container and layer `infra/compose/docker-compose.voice.yml` onto the normal
+Compose file. In Voice settings, select **Local speech**, connect the server's key (or a
+placeholder for a server without authentication), and choose a voice. Open a bot and press
+**Voice** to call it.
+
+Web and desktop calls with server transcription keep an echo-cancelled microphone open,
+detect speech locally with Silero VAD, and start transcription during pauses. Completed
+reply phrases play while the agent is still working, with the next phrase synthesized
+during playback. Speaking over a reply holds its audio; a confirmed new turn stops the old
+run, while noise resumes the held speech. Native mobile retains its device recognition and
+recording path. Calls without server transcription retain browser dictation. Microphone
+access needs localhost or HTTPS. Speech and transcription responses include `Server-Timing`
+headers for measuring backend latency.
+
 For deployment, provider selection, backups, and upgrades, see the
 [self-hosting guide](./docs/self-host.md).
 

@@ -6,11 +6,24 @@ import {
   runThreadSubscription,
 } from "@rakazo/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CallMicrophone } from "./call-microphone.js";
 import { ECHO_GUARD_MS, endCall, getSnapshot, startCall, toggleMute } from "./call-session";
 import { dictation } from "./dictation.js";
 import { rpc } from "./rpc.js";
 import { reduceThreadSnapshot } from "./thread-events.js";
 import { speaker } from "./tts.js";
+
+const { microphoneStart, microphoneStop } = vi.hoisted(() => ({
+  microphoneStart: vi.fn<CallMicrophone["start"]>(async () => undefined),
+  microphoneStop: vi.fn(),
+}));
+
+vi.mock("./call-microphone.js", () => ({
+  CallMicrophone: class {
+    start = microphoneStart;
+    stop = microphoneStop;
+  },
+}));
 
 // The macro compiles away in the app build; tests run the source, so tag the template as-is.
 vi.mock("@lingui/core/macro", () => ({
@@ -33,6 +46,9 @@ vi.mock("./dictation.js", () => ({
 vi.mock("./tts.js", () => ({
   speaker: {
     speak: vi.fn(async () => undefined),
+    enqueue: vi.fn(),
+    pauseQueue: vi.fn(() => []),
+    unlock: vi.fn(),
     stop: vi.fn(),
     isSpeaking: vi.fn(() => false),
     subscribe: vi.fn(() => () => undefined),
@@ -48,6 +64,7 @@ vi.mock("./rpc.js", () => ({
       get: vi.fn(),
       head: vi.fn(),
       send: vi.fn(),
+      stop: vi.fn(async () => ({ ok: true })),
       subscribe: vi.fn(),
     },
   },
@@ -88,7 +105,68 @@ describe("call session", () => {
       phase: "listening",
       muted: false,
     });
-    expect(listen).toHaveBeenCalledWith(expect.objectContaining({ transcribe: true }));
+    expect(listen).not.toHaveBeenCalled();
+    expect(microphoneStart).toHaveBeenCalledOnce();
+    expect(getSnapshot()?.caption).toBe("");
+  });
+
+  it("speaks completed phrases during a run without replaying the persisted reply", async () => {
+    startCall({ botId: "call-bot", botName: "Ada", transcribe: true });
+    const feed = vi.mocked(runThreadSubscription).mock.calls[0]?.[0];
+    getThread.mockResolvedValue(
+      snapshot([streamingMessage("I can help with that. Let me")], runningRun) as never,
+    );
+    await continuousHeard("check the schedule");
+    expect(speaker.enqueue).toHaveBeenCalledWith("I can help with that.", { botId: "call-bot" });
+    getThread.mockResolvedValue(
+      snapshot([botMessage("message-1", "I can help with that. Let me check.")]) as never,
+    );
+    await feed?.refresh();
+    expect(vi.mocked(speaker.enqueue).mock.calls.map(([text]) => text)).toEqual([
+      "I can help with that.",
+      "Let me check.",
+    ]);
+    await feed?.refresh();
+    expect(speaker.enqueue).toHaveBeenCalledTimes(2);
+    expect(microphoneStart).toHaveBeenCalledOnce();
+    expect(listen).not.toHaveBeenCalled();
+  });
+
+  it("stops an interrupted run before sending the next voice turn", async () => {
+    startCall({ botId: "call-bot", botName: "Ada", transcribe: true });
+    getThread.mockResolvedValue(
+      snapshot([streamingMessage("I can help with that. More")], runningRun) as never,
+    );
+    await continuousHeard("check the schedule");
+    microphoneStart.mock.calls[0]?.[0].onSpeechStart();
+    await continuousHeard("stop and check tomorrow instead");
+    expect(rpc.threads.stop).toHaveBeenCalledWith({ botId: "call-bot" });
+    expect(followUp).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(rpc.threads.stop).mock.invocationCallOrder[0]).toBeLessThan(
+      send.mock.invocationCallOrder[1] ?? 0,
+    );
+  });
+
+  it("holds speech on detection and resumes it when transcription contains only noise", async () => {
+    startCall({ botId: "call-bot", botName: "Ada", transcribe: true });
+    vi.mocked(speaker.pauseQueue).mockReturnValueOnce(["I can help with that."]);
+    microphoneStart.mock.calls[0]?.[0].onSpeechStart();
+    expect(speaker.pauseQueue).toHaveBeenCalledOnce();
+    await continuousHeard("");
+    expect(send).not.toHaveBeenCalled();
+    expect(speaker.enqueue).toHaveBeenCalledWith("I can help with that.", { botId: "call-bot" });
+  });
+
+  it("stops the persistent microphone on mute and ignores pending transcription", async () => {
+    startCall({ botId: "call-bot", botName: "Ada", transcribe: true });
+    microphoneStop.mockClear();
+    toggleMute();
+    expect(microphoneStop).toHaveBeenCalledOnce();
+    await continuousHeard("do not send this");
+    expect(send).not.toHaveBeenCalled();
+    toggleMute();
+    expect(microphoneStart).toHaveBeenCalledTimes(2);
   });
 
   it("sends what it heard to the bot on the call, not the bot on screen", async () => {
@@ -721,6 +799,11 @@ async function heard(text: string) {
   const onFinal = listen.mock.calls.at(-1)?.[0]?.onFinal;
   await onFinal?.(text);
   await Promise.resolve();
+}
+
+async function continuousHeard(text: string) {
+  microphoneStart.mock.calls.at(-1)?.[0].onFinal(text);
+  for (let i = 0; i < 12; i += 1) await Promise.resolve();
 }
 
 function botMessage(id: string, text: string): ThreadMessage {

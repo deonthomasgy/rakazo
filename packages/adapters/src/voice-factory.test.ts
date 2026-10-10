@@ -114,6 +114,31 @@ describe("ElevenLabsVoiceProvider", () => {
 });
 
 describe("OpenAIVoiceProvider", () => {
+  it("never sends a compatible server's credential to hosted transcription", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAIVoiceProvider({ baseUrl: "http://speech.test/v1", model: "speech" });
+    expect(provider.describe().capabilities.transcribe).toBe(false);
+    await expect(
+      provider.transcribe(
+        { audio: new Uint8Array([1]), mimeType: "audio/wav", apiKey: "local-key" },
+        ctx,
+      ),
+    ).rejects.toThrow("separate transcription service");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("uses a compatible speech endpoint and configured model without changing hosted defaults", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Uint8Array([9])));
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAIVoiceProvider({
+      baseUrl: "http://speech.test/v1/",
+      model: "speech",
+    });
+    await provider.synthesize({ text: "Hello.", voiceId: "voice", apiKey: "local-key" }, ctx);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://speech.test/v1/audio/speech");
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1].body).model).toBe("speech");
+  });
   it("returns a static voice catalog without a network round trip", async () => {
     const provider = new OpenAIVoiceProvider();
     const voices = await provider.listVoices("sk-test", ctx);
