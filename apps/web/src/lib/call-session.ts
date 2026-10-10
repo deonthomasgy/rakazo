@@ -1,5 +1,6 @@
 import { t } from "@lingui/core/macro";
 import type { ThreadMessage, ThreadSnapshot } from "@rakazo/contracts";
+import type { VoiceAvatarActivity, VoiceAvatarLevels } from "@rakazo/core";
 import {
   callClientNonce,
   INTERIM_BARGE_IN_MS,
@@ -12,6 +13,7 @@ import {
   speechFromBlocks,
   spokenDecision,
   spokenMemory,
+  voiceAvatarMode,
 } from "@rakazo/core";
 import { useSyncExternalStore } from "react";
 import { CallMicrophone } from "./call-microphone.js";
@@ -56,6 +58,22 @@ let feed: AbortController | null = null;
 const spokenMessageIds = new Set<string>();
 const streamingSpeech = new StreamingSpeech();
 const callMicrophone = new CallMicrophone();
+const voiceLevels: VoiceAvatarLevels = {
+  get input() {
+    return callMicrophone.level;
+  },
+  get output() {
+    return speaker.level;
+  },
+};
+
+export function callAvatarActivity(call: CallState | null): VoiceAvatarActivity | undefined {
+  if (!call) return undefined;
+  return {
+    mode: voiceAvatarMode(call.phase, call.muted),
+    levels: continuousMic ? voiceLevels : undefined,
+  };
+}
 let continuousMic = false;
 let callRunId: string | null = null;
 let initialSnapshot = true;

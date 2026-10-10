@@ -82,6 +82,13 @@ test("voice settings connect a key, speak a reply, and open a call", async ({ pa
     .getByRole("button", { name: "Voice", exact: true })
     .click();
   await expect(page.getByTestId("call-view")).toBeVisible();
+  const orb = page.getByTestId("call-view").locator(".rakazo-voice-orb");
+  await expect(orb).toBeVisible();
+  await expect(orb).toHaveAttribute("data-voice-mode", "input");
+  await page.getByRole("button", { name: "Mute", exact: true }).click();
+  await expect(orb).toHaveAttribute("data-voice-mode", "muted");
+  await page.getByRole("button", { name: "Unmute", exact: true }).click();
+  await expect(orb).toHaveAttribute("data-voice-mode", "input");
   await expect(page.getByRole("button", { name: "Hang up" })).toBeVisible();
   await captureScreenshot(page, testInfo, "voice-call");
   await page.getByRole("button", { name: "Hang up" }).click();

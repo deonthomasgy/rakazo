@@ -1,6 +1,6 @@
 # Third-party notices
 
-Rakazo includes modified Pithagoras voice code (Copyright 2026 Anirban Kar and Contributors), licensed under Apache 2.0. See `LICENSE` and `NOTICE`.
+Rakazo includes modified Pithagoras voice and orb animation code (Copyright 2026 Anirban Kar and Contributors), licensed under Apache 2.0. See `LICENSE` and `NOTICE`.
 
 The web app ships a few ready-made files that come from other projects. `pnpm --filter @rakazo/web build` copies them into `voice-assets/` of the web app, next to a copy of this file, and the voice mode in the browser loads them from there. They stay under their own licences, which are given in full below.
 

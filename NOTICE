@@ -1,6 +1,7 @@
 Rakazo voice functionality includes modified code from Pithagoras
 Copyright 2026 Anirban Kar and Contributors.
-(web/src/live-transcription.ts, speech-pipeline.ts, samples.ts and voice.ts),
+(web/src/live-transcription.ts, speech-pipeline.ts, samples.ts, voice.ts,
+components/VoiceOrb.tsx and server/src/orb-style.ts),
 distributed under the Apache License, Version 2.0. See LICENSE.
 
 Locally served voice assets retain their own licenses; see THIRD_PARTY_NOTICES.md.

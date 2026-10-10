@@ -1,4 +1,9 @@
-import { readBoundedResponseBytes, SpeechPipeline, toUtterances } from "@rakazo/core";
+import {
+  readBoundedResponseBytes,
+  SpeechPipeline,
+  toUtterances,
+  voiceAudioLevel,
+} from "@rakazo/core";
 import { rpc, selectedSpaceId, withSpaceHeaders } from "./rpc.js";
 import { errorText } from "./user-error.js";
 
@@ -26,6 +31,7 @@ export const MAX_VOICE_AUDIO_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_ERROR_BYTES = 64 * 1024;
 
 export class Speaker {
+  level = 0;
   private snapshot: SpeechSnapshot = IDLE;
   private watchers = new Set<(s: SpeechSnapshot) => void>();
   private token = 0;
@@ -88,8 +94,28 @@ export class Speaker {
       }
       const source = context.createBufferSource();
       source.buffer = buffer;
-      source.connect(context.destination);
+      let meterFrame = 0;
+      const analyser =
+        typeof context.createAnalyser === "function" ? context.createAnalyser() : null;
+      if (analyser) {
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+        analyser.connect(context.destination);
+        const samples = new Float32Array(analyser.fftSize);
+        const measure = () => {
+          analyser.getFloatTimeDomainData(samples);
+          this.level = voiceAudioLevel(samples, 5);
+          meterFrame = requestAnimationFrame(measure);
+        };
+        meterFrame = requestAnimationFrame(measure);
+      } else source.connect(context.destination);
+      let settled = false;
       const finish = (finished: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (meterFrame) cancelAnimationFrame(meterFrame);
+        analyser?.disconnect();
+        this.level = 0;
         signal.removeEventListener("abort", abort);
         source.onended = null;
         source.disconnect();
@@ -101,7 +127,11 @@ export class Speaker {
       };
       signal.addEventListener("abort", abort, { once: true });
       source.onended = () => finish(true);
-      source.start();
+      try {
+        source.start();
+      } catch {
+        finish(false);
+      }
     });
   }
 
@@ -128,6 +158,7 @@ export class Speaker {
   }
 
   stop() {
+    this.level = 0;
     this.token += 1;
     this.queue.cancel();
     this.request?.abort();

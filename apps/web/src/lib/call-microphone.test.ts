@@ -45,6 +45,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("meters speech without background noise and clears the meter on stop", async () => {
+  await microphone.start(callbacks);
+  const processFrame = options().onFrameProcessed!;
+  processFrame({ isSpeech: 0.8, notSpeech: 0.2 }, new Float32Array([0.1, -0.1]));
+  expect(microphone.level).toBeCloseTo(0.7);
+  processFrame({ isSpeech: 0.1, notSpeech: 0.9 }, new Float32Array([0.2, -0.2]));
+  expect(microphone.level).toBe(0);
+  microphone.stop();
+  processFrame({ isSpeech: 0.8, notSpeech: 0.2 }, new Float32Array([0.1, -0.1]));
+  expect(microphone.level).toBe(0);
+});
+
 it("keeps one echo-cancelled stream through successive spoken turns", async () => {
   await microphone.start(callbacks);
   expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({

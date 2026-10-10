@@ -1,8 +1,10 @@
 import type { AvatarStyle } from "@rakazo/contracts";
+import type { VoiceAvatarActivity } from "@rakazo/core";
 import {
   ACTIVE_RUN_STATUSES,
   avatarIdentitySeed,
   organicAvatarPath,
+  resolvePersonaColorDef,
   SHIPPED_BOT_AVATAR_CENTER,
   SHIPPED_BOT_AVATAR_VIEWBOX,
 } from "@rakazo/core";
@@ -24,6 +26,7 @@ import { mobileBotAvatarPresentation } from "../lib/bot-avatar";
 import { useI18n } from "../lib/i18n";
 import { useAvatarStyle } from "./avatar-style";
 import { NativeSymbol } from "./native-symbol";
+import { VoiceOrb } from "./voice-orb";
 
 const AnimatedRect = Animated.createAnimatedComponent(Rect);
 
@@ -34,6 +37,7 @@ export const BotAvatar = memo(function BotAvatar({
   identity,
   variant,
   muted = false,
+  voice,
 }: {
   color: string;
   size?: number;
@@ -41,6 +45,7 @@ export const BotAvatar = memo(function BotAvatar({
   identity?: string;
   variant?: AvatarStyle;
   muted?: boolean;
+  voice?: VoiceAvatarActivity;
 }) {
   const { t } = useI18n();
   const isWorking = ACTIVE_RUN_STATUSES.some((activeStatus) => activeStatus === status);
@@ -52,68 +57,73 @@ export const BotAvatar = memo(function BotAvatar({
   const eyeW = Math.max(3, Math.round(size * 0.11));
   const eyeH = Math.max(4, Math.round(size * 0.17));
   const gap = Math.max(3, Math.round(size * 0.11));
-  const picture =
-    parsed.kind === "image" && parsed.imageUrl ? (
+  const picture = voice ? (
+    <VoiceOrb
+      color={resolvePersonaColorDef(identity ?? "agent", fillColor).hex}
+      size={size}
+      voice={voice}
+    />
+  ) : parsed.kind === "image" && parsed.imageUrl ? (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        overflow: "hidden",
+      }}
+    >
+      <Image source={{ uri: parsed.imageUrl }} style={{ width: size, height: size }} />
+    </View>
+  ) : parsed.kind === "shape" ? (
+    <ShippedShapeAvatar
+      color={parsed.color}
+      eyeColor={parsed.eyeColor}
+      shapePath={parsed.shapePath}
+      size={size}
+    />
+  ) : (variant ?? avatarStyle) === "organic" ? (
+    <OrganicAvatar color={fillColor} identity={identity} size={size} isWorking={isWorking} />
+  ) : (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: fillColor,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
       <View
         style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          overflow: "hidden",
-        }}
-      >
-        <Image source={{ uri: parsed.imageUrl }} style={{ width: size, height: size }} />
-      </View>
-    ) : parsed.kind === "shape" ? (
-      <ShippedShapeAvatar
-        color={parsed.color}
-        eyeColor={parsed.eyeColor}
-        shapePath={parsed.shapePath}
-        size={size}
-      />
-    ) : (variant ?? avatarStyle) === "organic" ? (
-      <OrganicAvatar color={fillColor} identity={identity} size={size} isWorking={isWorking} />
-    ) : (
-      <View
-        style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: fillColor,
+          width: visorW,
+          height: visorH,
+          borderRadius: Math.round(visorH * 0.52),
+          backgroundColor: "#0C0C0E",
+          flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
+          gap,
         }}
       >
-        <View
-          style={{
-            width: visorW,
-            height: visorH,
-            borderRadius: Math.round(visorH * 0.52),
-            backgroundColor: "#0C0C0E",
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            gap,
-          }}
-        >
-          {[0, 1].map((eye) => (
-            <View
-              key={eye}
-              style={{
-                width: eyeW,
-                height: eyeH,
-                borderRadius: Math.max(2, Math.round(eyeW * 0.6)),
-                backgroundColor: "#fff",
-              }}
-            />
-          ))}
-        </View>
+        {[0, 1].map((eye) => (
+          <View
+            key={eye}
+            style={{
+              width: eyeW,
+              height: eyeH,
+              borderRadius: Math.max(2, Math.round(eyeW * 0.6)),
+              backgroundColor: "#fff",
+            }}
+          />
+        ))}
       </View>
-    );
+    </View>
+  );
   return (
     <View style={{ width: size, height: size }}>
       {picture}
-      {isWorking ? (
+      {isWorking && !voice ? (
         <View
           accessibilityLabel={t("Working")}
           style={{

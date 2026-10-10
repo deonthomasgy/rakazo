@@ -174,7 +174,7 @@ import {
   requestBrowserNotificationPermission,
   shouldNotifyBrowser,
 } from "../lib/browser-notifications";
-import { startCall, useCallSession } from "../lib/call-session";
+import { callAvatarActivity, startCall, useCallSession } from "../lib/call-session";
 import { newClientId } from "../lib/client-id";
 import {
   embeddableScreenUrl,
@@ -3201,6 +3201,11 @@ export function ShellPage() {
                                   identity={item.chat.id}
                                   size={38}
                                   status={item.chat.status}
+                                  voice={
+                                    call?.botId === item.chat.id
+                                      ? callAvatarActivity(call)
+                                      : undefined
+                                  }
                                 />
                               ) : (
                                 <GroupAvatar
@@ -3551,6 +3556,7 @@ export function ShellPage() {
                   identity={active.id}
                   size={26}
                   status={active.status}
+                  voice={call?.botId === active.id ? callAvatarActivity(call) : undefined}
                 />
               ) : null}
               <span className="min-w-0">

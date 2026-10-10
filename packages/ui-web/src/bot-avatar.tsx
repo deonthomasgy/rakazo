@@ -1,4 +1,4 @@
-import type { GrokColorDef } from "@rakazo/core";
+import type { GrokColorDef, VoiceAvatarActivity } from "@rakazo/core";
 import {
   ACTIVE_RUN_STATUSES,
   avatarIdentitySeed,
@@ -20,6 +20,7 @@ import { memo, useId, useMemo, useSyncExternalStore } from "react";
 import type { AvatarStyle } from "./avatar-style.js";
 import { useAvatarStyle } from "./avatar-style.js";
 import { cn } from "./lib/utils.js";
+import { VoiceOrb } from "./voice-orb.js";
 import "./styles.css";
 
 export type { GrokColorDef };
@@ -93,6 +94,7 @@ export interface BotAvatarProps {
   identity?: string;
   className?: string;
   variant?: AvatarStyle;
+  voice?: VoiceAvatarActivity;
 }
 
 export const BotAvatar = memo(function BotAvatar({
@@ -102,6 +104,7 @@ export const BotAvatar = memo(function BotAvatar({
   identity = "",
   className,
   variant,
+  voice,
 }: BotAvatarProps) {
   const id = useId().replace(/[^a-zA-Z0-9-_]/g, "");
   const isWorking = ACTIVE_RUN_STATUSES.some((s) => s === status);
@@ -121,6 +124,10 @@ export const BotAvatar = memo(function BotAvatar({
     }
     return resolvePersonaShape(effectiveId);
   }, [parsed.shapeIndex, effectiveId]);
+
+  if (voice) {
+    return <VoiceOrb color={colorDef.hex} size={size} voice={voice} className={className} />;
+  }
 
   if (parsed.isImage && parsed.imageUrl) {
     return (

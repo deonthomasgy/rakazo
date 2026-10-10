@@ -1,11 +1,16 @@
 import { useLingui } from "@lingui/react/macro";
 import { BotAvatar, Button, cn } from "@rakazo/ui-web";
-import { Captions, Mic, MicOff, PhoneOff, Settings, User } from "lucide-react";
+import { Captions, Mic, MicOff, PhoneOff, Settings } from "lucide-react";
 import { useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { endCall, toggleMute, toggleTranscript, useCallSession } from "../../lib/call-session";
+import {
+  callAvatarActivity,
+  endCall,
+  toggleMute,
+  toggleTranscript,
+  useCallSession,
+} from "../../lib/call-session";
 
-const BARS = [9, 15, 21, 15, 9];
 const TRANSCRIPT_LINES = 4;
 const EDITABLE = /^(?:input|textarea|select)$/i;
 
@@ -31,45 +36,26 @@ export function CallCard({ onSettings }: { onSettings: () => void }) {
   return (
     <div
       data-testid="call-view"
-      className="fixed end-4 top-4 z-50 w-[360px] rounded-2xl border border-border bg-card p-3 shadow-lg"
+      className="fixed end-4 top-4 z-50 w-[min(280px,calc(100vw-32px))] rounded-2xl border border-border bg-card p-3 shadow-lg"
     >
-      <div className="flex items-center gap-2.5">
-        <BotAvatar color={call.botColor} identity={call.botId} size={28} />
+      <div className="flex flex-col items-center">
         <button
           type="button"
           aria-label={t`On a call with ${call.botName}`}
           onClick={() => {
             if (!onBotScreen) navigate(`/app/${call.botId}`);
           }}
-          className="min-w-0 truncate text-[14.5px] font-medium text-foreground hover:text-foreground/70"
+          className="max-w-full truncate text-[14.5px] font-medium text-foreground hover:text-foreground/70"
           dir="auto"
         >
           {call.botName}
         </button>
-        <div className="flex flex-1 items-center justify-center gap-[3px]" aria-hidden="true">
-          {BARS.map((height, index) => (
-            <span
-              key={`bar-${index + 1}`}
-              className={cn(
-                "w-[3px] rounded-full",
-                call.phase === "thinking"
-                  ? "bg-muted-foreground/40"
-                  : "animate-pulse bg-foreground",
-              )}
-              style={{
-                height,
-                animationDelay: `${index * 90}ms`,
-                animationDuration: call.phase === "speaking" ? "600ms" : "1200ms",
-              }}
-            />
-          ))}
-        </div>
-        <span
-          className="grid size-7 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground"
-          aria-hidden="true"
-        >
-          <User className="size-3.5" />
-        </span>
+        <BotAvatar
+          color={call.botColor}
+          identity={call.botId}
+          size={128}
+          voice={callAvatarActivity(call)}
+        />
       </div>
       <div className="mt-3 flex items-center justify-center gap-2">
         <Button

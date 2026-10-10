@@ -173,8 +173,12 @@ detect speech locally with Silero VAD, and start transcription during pauses. Co
 reply phrases play while the agent is still working, with the next phrase synthesized
 during playback. Speaking over a reply holds its audio; a confirmed new turn stops the old
 run, while noise resumes the held speech. Native mobile retains its device recognition and
-recording path. Calls without server transcription retain browser dictation. Microphone
-access needs localhost or HTTPS. Speech and transcription responses include `Server-Timing`
+recording path. Calls without server transcription retain browser dictation.
+
+The call avatar uses Pithagoras's orb: it changes expression and color between listening,
+thinking, speaking, and mute. Web and desktop motion follows microphone and playback volume;
+native mobile and browser dictation follow the call phase without a raw audio meter.
+Microphone access needs localhost or HTTPS. Speech and transcription responses include `Server-Timing`
 headers for measuring backend latency.
 
 For deployment, provider selection, backups, and upgrades, see the

@@ -1,9 +1,10 @@
-import { LiveTranscription } from "@rakazo/core";
+import { LiveTranscription, voiceAudioLevel } from "@rakazo/core";
 import type { MicVAD } from "@ricky0123/vad-web";
 import { transcribeAudio } from "./dictation.js";
 
 /** One echo-cancelled microphone stays open for the entire server-transcribed call. */
 export class CallMicrophone {
+  level = 0;
   private generation = 0;
   private stream: MediaStream | null = null;
   private context: AudioContext | null = null;
@@ -17,6 +18,7 @@ export class CallMicrophone {
   private maxTurn: ReturnType<typeof setTimeout> | undefined;
 
   stop() {
+    this.level = 0;
     this.generation += 1;
     this.controller.abort();
     this.transcription?.reset();
@@ -126,7 +128,10 @@ export class CallMicrophone {
           if (live()) transcription.discard();
         },
         onFrameProcessed: (probabilities, frame) => {
-          if (live()) transcription.frame(probabilities.isSpeech, frame);
+          if (live()) {
+            this.level = probabilities.isSpeech >= 0.35 ? voiceAudioLevel(frame) : 0;
+            transcription.frame(probabilities.isSpeech, frame);
+          }
         },
         onSpeechRealStart: () => {
           if (!live()) return;

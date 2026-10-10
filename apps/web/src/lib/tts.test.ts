@@ -24,6 +24,68 @@ function stubSelectedSpace(id: string) {
 }
 
 describe("Speaker", () => {
+  it.each(["ended", "interrupted", "failed"])(
+    "cleans up the reply audio meter when playback is %s",
+    async (ending) => {
+      const frames = new Map<number, FrameRequestCallback>();
+      let frameId = 0;
+      vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        frames.set(++frameId, callback);
+        return frameId;
+      });
+      vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+      const analyser = {
+        fftSize: 1024,
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+        getFloatTimeDomainData: (samples: Float32Array) => samples.fill(0.1),
+      };
+      const source = {
+        buffer: null,
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+        start: vi.fn(() => {
+          if (ending === "failed") throw new Error("Audio unavailable");
+        }),
+        stop: vi.fn(),
+        onended: null as (() => void) | null,
+      };
+      const destination = {};
+      vi.stubGlobal(
+        "AudioContext",
+        class {
+          destination = destination;
+          resume = async () => undefined;
+          decodeAudioData = async () => ({});
+          createBufferSource = () => source;
+          createAnalyser = () => analyser;
+        },
+      );
+      const speaker = new Speaker();
+      vi.spyOn(speaker as unknown as { render: () => Promise<Blob> }, "render").mockResolvedValue(
+        new Blob(["audio"]),
+      );
+      speaker.unlock();
+      speaker.enqueue("Hello.");
+      await vi.waitFor(() => expect(source.start).toHaveBeenCalledOnce());
+      expect(source.connect).toHaveBeenCalledWith(analyser);
+      expect(analyser.connect).toHaveBeenCalledWith(destination);
+      if (ending !== "failed") {
+        const frame = frames.entries().next().value!;
+        frames.delete(frame[0]);
+        frame[1](16);
+        expect(speaker.level).toBeCloseTo(0.5);
+        if (ending === "interrupted") speaker.pauseQueue();
+        else source.onended?.();
+      }
+      await vi.waitFor(() => expect(speaker.state.status).toBe("idle"));
+      expect(speaker.level).toBe(0);
+      expect(frames.size).toBe(0);
+      expect(analyser.disconnect).toHaveBeenCalledOnce();
+      expect(source.disconnect).toHaveBeenCalledOnce();
+    },
+  );
+
   it("interrupting before audio arrives leaves the speaker idle", async () => {
     const speaker = new Speaker();
     vi.spyOn(
