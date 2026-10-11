@@ -35,7 +35,7 @@ fi
 
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
 
-Xvfb :1 -screen 0 1280x800x24 -ac +extension RANDR +render -noreset >/tmp/rakazo/xvfb.log 2>&1 &
+Xvfb :1 -screen 0 1280x800x24 -ac +extension RANDR +render -noreset -nolisten tcp >/tmp/rakazo/xvfb.log 2>&1 &
 XVFB_PID=$!
 
 ready=0
@@ -70,6 +70,7 @@ if [ -x /usr/libexec/xdg-desktop-portal ] && [ -x /usr/libexec/xdg-desktop-porta
 fi
 
 xsetroot -solid "#111113" >/dev/null 2>&1 || true
+xset s off -dpms >/dev/null 2>&1 || true
 mkdir -p /tmp/fluxbox-home/.fluxbox
 cp /etc/rakazo/fluxbox/init /tmp/fluxbox-home/.fluxbox/init
 cp /etc/rakazo/fluxbox/apps /tmp/fluxbox-home/.fluxbox/apps 2>/dev/null || true
@@ -99,26 +100,7 @@ if ! xdg-settings set default-web-browser rakazo-browser.desktop >/dev/null 2>&1
   exit 1
 fi
 
-x11vnc -display :1 -forever -shared -viewonly -nopw -listen 127.0.0.1 -rfbport 5900 -xkb -ncache 0 >/tmp/rakazo/x11vnc.log 2>&1 &
-
-NOVNC_ROOT=/usr/share/novnc
-if [[ ! -d "$NOVNC_ROOT" ]]; then
-  echo "noVNC is missing from the computer image" >&2
-  exit 1
-fi
-if [[ ! -f "$NOVNC_ROOT/embed.html" ]]; then
-  echo "noVNC embed.html is missing from the computer image" >&2
-  exit 1
-fi
-if [[ ! -f "$NOVNC_ROOT/clipboard-bridge.js" ]]; then
-  echo "noVNC clipboard-bridge.js is missing from the computer image" >&2
-  exit 1
-fi
-if [[ ! -f "$NOVNC_ROOT/mobile-keyboard.js" ]]; then
-  echo "noVNC mobile-keyboard.js is missing from the computer image" >&2
-  exit 1
-fi
-websockify --heartbeat=30 --web="$NOVNC_ROOT" --token-plugin=TokenFile --token-source=/tmp/rakazo/view-target-1 0.0.0.0:6080 >/tmp/rakazo/novnc.log 2>&1 &
+/usr/local/bin/rakazo-stream-screen gateway-start 6080 || exit 1
 
 wait "$XVFB_PID"
 echo "Xvfb exited" >&2

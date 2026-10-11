@@ -806,6 +806,8 @@ export function ShellPage() {
   const activeGroupId = useRef<string | undefined>(groupId);
   activeGroupId.current = groupId;
   const screenRequest = useRef(0);
+  const previewScreenFrame = useRef<HTMLIFrameElement>(null);
+  const computerScreenFrame = useRef<HTMLIFrameElement>(null);
   const contextBot =
     botMenu?.kind === "bot" ? bots.find((bot) => bot.id === botMenu.id) : undefined;
   const contextGroup =
@@ -1104,6 +1106,22 @@ export function ShellPage() {
       fallbackError: t`Could not connect to the computer screen`,
     });
   }
+
+  useEffect(() => {
+    const disconnected = (event: MessageEvent) => {
+      if (
+        !event.source ||
+        event.data?.type !== "rakazo-screen-disconnected" ||
+        (event.source !== previewScreenFrame.current?.contentWindow &&
+          event.source !== computerScreenFrame.current?.contentWindow)
+      )
+        return;
+      const id = computerBotIdRef.current ?? activeBotId.current;
+      if (id) void refreshComputerScreen(id).catch(() => undefined);
+    };
+    window.addEventListener("message", disconnected);
+    return () => window.removeEventListener("message", disconnected);
+  }, []);
 
   async function loadOlderMessages() {
     const targetBotId = inGroup ? undefined : active?.id;
@@ -3777,6 +3795,7 @@ export function ShellPage() {
                   ) : computer?.state === "running" && embeddedScreenUrl && !computerScreenError ? (
                     <iframe
                       title={t`Bot screen preview`}
+                      ref={previewScreenFrame}
                       src={embeddedScreenUrl}
                       sandbox={screenIframeSandbox(embeddedScreenUrl)}
                       className="h-full w-full border-0 bg-black"
@@ -4701,6 +4720,7 @@ export function ShellPage() {
                   <>
                     <iframe
                       title={t`Bot screen`}
+                      ref={computerScreenFrame}
                       src={embeddedScreenUrl}
                       sandbox={screenIframeSandbox(embeddedScreenUrl)}
                       className="h-full w-full border-0 bg-black"

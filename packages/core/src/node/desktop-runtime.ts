@@ -338,6 +338,7 @@ export function resetDesktopRuntimeCommand(env = DEFAULT_DESKTOP_ENV) {
   ].join("\n");
   return [
     "set -eu",
+    "if [ -x /usr/local/bin/rakazo-stream-screen ]; then /usr/local/bin/rakazo-stream-screen reset; fi",
     `pkill -f ${shellQuote(gatewayPattern)} || true`,
     "sleep 0.1",
     `pkill -KILL -f ${shellQuote(gatewayPattern)} || true`,
@@ -409,6 +410,9 @@ function gatewayCommand(port: string) {
     `${processPattern}--token-source=${TARGETS} +0.0.0.0:${port}( |$)`,
   );
   return [
+    "if [ -x /usr/local/bin/rakazo-stream-screen ]; then",
+    `  /usr/local/bin/rakazo-stream-screen gateway-start ${port}`,
+    "else",
     proxyEnvironmentCommand(),
     `mkdir -p ${TARGETS}`,
     // This lock only covers gateway startup; desktop startup remains independent.
@@ -423,6 +427,7 @@ function gatewayCommand(port: string) {
     `for i in $(seq 1 50); do (echo >/dev/tcp/127.0.0.1/${port}) >/dev/null 2>&1 && break; sleep 0.1; done`,
     `flock -u 10; exec 10>&-`,
     `(echo >/dev/tcp/127.0.0.1/${port}) >/dev/null 2>&1`,
+    "fi",
   ].join("\n");
 }
 
@@ -447,6 +452,7 @@ function renderStopScreenTransportsCommand(index: number | undefined, env = DEFA
   const layout = commandLayout(index, env);
   return [
     ...layoutVariables(index, env),
+    `if [ -x /usr/local/bin/rakazo-stream-screen ]; then /usr/local/bin/rakazo-stream-screen stop ${layout.displayNumber}; fi`,
     // Drop authorization first, then terminate VNC so already connected gateway clients disconnect.
     revokeTargetCommand("view", layout.displayNumber),
     revokeTargetCommand("control", layout.displayNumber),
@@ -493,8 +499,10 @@ export function prepareBrowserProfileCommand(screenId: string, env = DEFAULT_DES
 
 function proxyEnvironmentCommand() {
   return [
+    "if [ ! -x /usr/local/bin/rakazo-stream-screen ]; then",
     'if command -v websockify >/dev/null 2>&1; then proxy=$(command -v websockify); elif [ -x /opt/noVNC/utils/websockify/run ]; then proxy=/opt/noVNC/utils/websockify/run; else echo "websockify is required" >&2; exit 1; fi',
     'if [ -d /usr/share/novnc ]; then web=/usr/share/novnc; elif [ -d /opt/noVNC ]; then web=/opt/noVNC; else echo "noVNC is required" >&2; exit 1; fi',
+    "fi",
   ].join("\n");
 }
 
@@ -535,6 +543,9 @@ function renderEnsureScreenCommand(
   const targetFile = `${TARGETS}/view-${layout.displayNumber}`;
   const socket = `/tmp/rakazo/sockets/view-${layout.displayNumber}-\${desktop_view_token}`;
   const setupView = [
+    "if [ -x /usr/local/bin/rakazo-stream-screen ]; then",
+    `  /usr/local/bin/rakazo-stream-screen ensure ${layout.displayNumber} "$desktop_view_token"`,
+    "else",
     `mkdir -p ${TARGETS} /tmp/rakazo/sockets`,
     `if [ ! -S ${socket} ] || ! pgrep -f ${quoteLayout(`^([^ ]*/)?x11vnc .* -unixsock ${socket}( |$)`)} >/dev/null; then`,
     stopVncCommand("view", layout),
@@ -549,6 +560,7 @@ function renderEnsureScreenCommand(
     `  printf '%s\\n' "$desired" >/tmp/rakazo/view-target-next-${layout.displayNumber}`,
     `  mv /tmp/rakazo/view-target-next-${layout.displayNumber} ${targetFile}`,
     "fi",
+    "fi",
     gatewayCommand(layout.viewPort),
   ];
   return [
@@ -562,6 +574,8 @@ function renderEnsureScreenCommand(
     `chmod 700 ${browserLauncherPath(layout.displayNumber)}`,
     ...setupDisplay,
     `xdpyinfo -display ${layout.display} >/dev/null 2>&1 || exit 1`,
+    // A working desktop must stay visible even when no human is sending input.
+    `DISPLAY=${layout.display} xset s off -dpms >/dev/null 2>&1 || true`,
     `mkdir -p /tmp/rakazo ${shellQuote(path.posix.dirname(profile))}`,
     ...browserRunningFunction(profile, pidFile),
     `printf %s ${shellQuote(profile)} >/tmp/rakazo/browser-profile-${layout.displayNumber}`,
@@ -586,6 +600,27 @@ export function interactiveScreenCommand(
   interactive: boolean,
   controlToken?: string,
   layout: ReturnType<typeof commandLayout> = screenPorts(0),
+) {
+  if (interactive && !controlToken) throw new Error("interactive screen requires a control token");
+  const tokenFile = `/tmp/rakazo/control-token-${layout.displayNumber}`;
+  return [
+    "if [ -x /usr/local/bin/rakazo-stream-screen ]; then",
+    `  previous_control=$(cat ${tokenFile} 2>/dev/null || true)`,
+    `  /usr/local/bin/rakazo-stream-screen ${interactive ? "control" : "revoke"} ${layout.displayNumber} ${shellQuote(controlToken ?? "")}`,
+    `  if [ "$previous_control" != "$(cat ${tokenFile} 2>/dev/null || true)" ]; then`,
+    stopTerminalCommand(layout),
+    "  fi",
+    gatewayCommand(layout.controlPort),
+    "else",
+    legacyInteractiveScreenCommand(interactive, controlToken, layout),
+    "fi",
+  ].join("\n");
+}
+
+function legacyInteractiveScreenCommand(
+  interactive: boolean,
+  controlToken: string | undefined,
+  layout: ReturnType<typeof commandLayout>,
 ) {
   const tokenFile = `/tmp/rakazo/control-token-${layout.displayNumber}`;
   const targetFile = `${TARGETS}/control-${layout.displayNumber}`;

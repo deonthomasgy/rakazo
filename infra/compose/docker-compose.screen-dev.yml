@@ -1,0 +1,23 @@
+# Build this checkout on top of the pull-based Compose stack.
+# docker compose -f infra/compose/docker-compose.images.yml -f infra/compose/docker-compose.screen-dev.yml up -d --build
+services:
+  computer:
+    image: rakazo/computer:local
+    build:
+      context: ../sandboxes/computer
+  supervisor:
+    image: rakazo/app:local
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+    environment:
+      RAKAZO_COMPUTER_IMAGE: rakazo/computer:local
+  api:
+    image: rakazo/app:local
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+  worker:
+    image: rakazo/app:local
+  web:
+    image: rakazo/app:local

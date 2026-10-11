@@ -217,7 +217,7 @@ describe("graphical computer spec", () => {
     expect(start).toMatch(/failed to set default web browser/);
     expect(start).toMatch(/xdg-settings set default-web-browser rakazo-browser\.desktop/);
     expect(start).not.toMatch(/xdg-mime default rakazo-browser\.desktop .*\|\| true/);
-    expect(start).toMatch(/x11vnc .* -viewonly /);
+    expect(start).toContain("rakazo-stream-screen gateway-start 6080");
     expect(browser).toMatch(/\.browser-profiles\/chromium/);
     expect(browser).toMatch(/chromium-screen-\$DISPLAY_NUM/);
     expect(browser).toMatch(/USER_DATA_DIR_SET/);

@@ -13,13 +13,15 @@ COPY xcapture.c .
 RUN cc -O3 -fPIC -shared -Wall -Wextra -Werror -o librakazo-xcapture.so xcapture.c \
     -lX11 -lXext -lXdamage -lXfixes -lXtst -lpng
 
-FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+FROM lscr.io/linuxserver/chromium@sha256:0fb230264d724bebb65bf7d777583de1f637eb4a4dea7e1ced20011456e22c7d
+# This pinned Chromium image includes Selkies and its matching WebCodecs client.
+# Rakazo starts its own unprivileged, per-bot X11 desktops rather than s6's desktop.
+ENTRYPOINT []
 # Dev tools let bots clone repos and fetch artifacts; containers run uid 1000
 # with no privilege escalation, so nothing can be installed at runtime.
 # Compilers stay in the builder stage; heavier toolchains are a separate call.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
-    x11vnc \
     fluxbox \
     xterm \
     xdotool \
@@ -27,8 +29,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11-utils \
     x11-xserver-utils \
     imagemagick \
-    novnc \
-    websockify \
     python3 \
     libnss-wrapper \
     ca-certificates \
@@ -58,8 +58,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && pdfinfo -v \
   && pandoc --version \
   && python3 -c 'import openpyxl; print(openpyxl.__version__)' \
-  && groupadd --gid 1000 rakazo \
-  && useradd --uid 1000 --gid rakazo --create-home --shell /bin/bash rakazo \
+  && groupmod --new-name rakazo "$(getent group 1000 | cut -d: -f1)" \
+  && usermod --login rakazo --gid 1000 --home /home/rakazo --shell /bin/bash "$(getent passwd 1000 | cut -d: -f1)" \
+  && mkdir -p /home/rakazo \
+  && chown 1000:1000 /home/rakazo \
   && mkdir -p /etc/rakazo/fluxbox \
   && printf '%s\n' '#!/bin/sh' 'exec xsetroot -solid "#111113" "$@"' > /usr/bin/fbsetbg \
   && chmod +x /usr/bin/fbsetbg \
@@ -111,6 +113,9 @@ WORKDIR /home/rakazo
 COPY --chmod=755 start.sh /usr/local/bin/rakazo-computer
 COPY --chmod=644 user-env.sh /usr/local/lib/rakazo-user-env.sh
 COPY --chmod=755 control.py /usr/local/bin/rakazo-computer-control
+COPY --chmod=755 stream-screen.py /usr/local/bin/rakazo-stream-screen
+COPY --chmod=644 screen-bootstrap.js /usr/local/share/rakazo/screen-bootstrap.js
+COPY --chmod=644 configure-stream.py /usr/local/share/rakazo/configure-stream.py
 COPY --from=capture-builder /build/librakazo-xcapture.so /usr/local/lib/librakazo-xcapture.so
 COPY --chmod=755 rakazo-browser /usr/local/bin/rakazo-browser
 COPY --chmod=755 rakazo-focus-or-launch /usr/local/bin/rakazo-focus-or-launch
@@ -119,18 +124,18 @@ COPY --chmod=644 rakazo-browser.desktop /usr/share/applications/rakazo-browser.d
 COPY --chmod=644 fluxbox.init /etc/rakazo/fluxbox/init
 COPY --chmod=644 fluxbox.apps /etc/rakazo/fluxbox/apps
 COPY --chmod=644 fluxbox.menu /etc/rakazo/fluxbox/menu
-COPY --chmod=644 embed.html /usr/share/novnc/embed.html
-COPY --chmod=644 clipboard-bridge.js /usr/share/novnc/clipboard-bridge.js
-COPY --chmod=644 mobile-keyboard.js /usr/share/novnc/mobile-keyboard.js
 # Login shells source this after Debian's /etc/profile resets PATH. The home
 # volume hides /etc/skel, so ~/.local/bin has to be restored from the image.
 COPY --chmod=644 rakazo-local-bin.sh /etc/profile.d/rakazo-local-bin.sh
 # Strip CR so shebangs work even if the build context came from a CRLF checkout.
 RUN ldconfig \
+  && cp -a /usr/share/selkies/selkies-dashboard /usr/share/selkies/web \
+  && cp /usr/share/selkies/www/icon.png /usr/share/selkies/web/icon.png \
+  && python3 /usr/local/share/rakazo/configure-stream.py \
   && sed -i 's/\r$//' /usr/local/bin/rakazo-computer /usr/local/lib/rakazo-user-env.sh /usr/local/bin/rakazo-computer-control /usr/local/bin/rakazo-browser /usr/local/bin/rakazo-focus-or-launch /usr/local/bin/rakazo-page-browser \
     /etc/rakazo/fluxbox/init /etc/rakazo/fluxbox/apps /etc/rakazo/fluxbox/menu \
     /etc/profile.d/rakazo-local-bin.sh
-EXPOSE 7070 6080 6081 6082 6083 6084 6085 6086 6087 6088 6089 6090 6091 6092 6093 6094 6095
+EXPOSE 7070 6080
 # Docker exec does not inherit PID 1's exports, so every process gets the same
 # identity lookup. Startup creates these private files for the effective UID/GID.
 ENV LD_PRELOAD=/usr/local/lib/libnss_wrapper.so \

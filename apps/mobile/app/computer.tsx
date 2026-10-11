@@ -608,13 +608,10 @@ function ScreenWebView({
       injectedJavaScript={
         nativeKeyboard && keyboardSession ? computerKeyboardReadyProbe(keyboardSession) : undefined
       }
-      onMessage={
-        nativeKeyboard
-          ? (event) => {
-              onKeyboardMessage?.(event.nativeEvent.data);
-            }
-          : undefined
-      }
+      onMessage={(event) => {
+        if (event.nativeEvent.data === "rakazo-screen-disconnected") onError();
+        else if (nativeKeyboard) onKeyboardMessage?.(event.nativeEvent.data);
+      }}
       style={{ flex: 1, backgroundColor: tokens.background }}
       pointerEvents={interactive ? "auto" : "none"}
       // A view-only screen is a picture: keep its page, including the hidden keyboard field,
